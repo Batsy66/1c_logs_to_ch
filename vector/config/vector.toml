@@ -1,0 +1,117 @@
+# Чтение из файлов
+[sources.input_logs]
+  type = "file"
+  include = ["/var/log/log_1c/*.lgp"]
+  data_dir =  "/var/log/log_1c"
+  fingerprint.strategy = "device_and_inode"
+  multiline.timeout_ms = 1000
+  multiline.mode = "halt_before"
+  multiline.start_pattern = ''
+  multiline.condition_pattern = '\{\d{14},.+?,'
+
+# Базовая трансформация
+[transforms.remap_logs]
+  inputs = ["input_logs"]
+  type = "remap"
+  file="/etc/vector/transform.vrl"
+
+###################### СЕКЦИЯ СОБЫТИЙ ########################
+# Для обработки необходимо создать фильтр по событию и ремап #
+##############################################################
+
+[transforms.filter_error] 
+  inputs = ["remap_logs"]
+  type = "filter"
+  condition = '.err != null'
+
+[transforms.filter_success] 
+  inputs = ["remap_logs"]
+  type = "filter"
+  condition = '.err == null'
+
+[transforms.preparation_data]
+  type = "lua"
+  version = "2"
+  inputs = ["filter_success"]
+  source = "require 'transform'"
+  hooks.init = "init"
+  hooks.process = "process"
+  hooks.shutdown = "shutdown"
+  timers = [{interval_seconds = 1, handler = "timer_handler"}]
+
+#####################################
+#  Вывод результата в БД clickhouse #
+#####################################
+
+[sinks.emit_log_sucsess]
+  type = "clickhouse"
+  inputs = ["preparation_data"]
+  endpoint = '''${ch_server}'''
+  auth.strategy = "basic"
+  auth.user = '''${ch_user}'''
+  auth.password = '''${ch_password}'''
+  database = '''${ch_database}'''
+  table = "log_data"
+  skip_unknown_fields = true
+  encoding.timestamp_format = "unix"
+  batch.max_events = 10000
+  batch.timeout_secs = 5
+  acknowledgements.enabled = true
+  # request. rate_limit_duration_secs = 1
+  # request.rate_limit_num = 1
+
+
+[sinks.emit_log_error]
+  type = "clickhouse"
+  inputs = ["filter_error"]
+  endpoint = '''${ch_server}'''
+  auth.strategy = "basic"
+  auth.user = '''${ch_user}'''
+  auth.password = '''${ch_password}'''
+  database = '''${ch_database}'''
+  table = "import_erorrs"
+  skip_unknown_fields = true
+  encoding.timestamp_format = "unix"
+  batch.max_events = 100
+  batch.timeout_secs = 5
+  acknowledgements.enabled = true
+  
+
+#####################################
+#  Вывод результата в json #
+#####################################
+
+# [sinks.preparation_data_json_out]
+#   type = "file"
+#   inputs = [ "preparation_data" ]
+#   compression = "none"
+#   path = "/tmp/preparation_data/%Y-%m-%d %H:%M.json"
+  
+#   [sinks.preparation_data_json_out.encoding]
+#     codec = "json"
+
+# [sinks.filter_error_json_out]
+#   type = "file"
+#   inputs = [ "filter_error" ]
+#   compression = "none"
+#   path = "/tmp/filter_error/%Y-%m-%d %H:%M.json"
+  
+#   [sinks.filter_error_json_out.encoding]
+#     codec = "json"
+
+##############
+# Monitoring #
+##############
+
+# [sources.vector_metrics]
+#    type = "internal_metrics"
+
+# [sinks.vector_metrics_exporter]
+#   type = "prometheus_exporter"
+#   inputs = [ "vector_metrics" ]
+#   address = '''${vector_metric_ip_port}'''
+#   default_namespace = "service"
+
+# [api]
+#   enabled = true
+#   address = '''${vector_api_ip_port}'''

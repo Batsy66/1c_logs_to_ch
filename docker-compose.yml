@@ -1,0 +1,39 @@
+version: "3.9"
+
+services:
+  ClickHouse-Server:
+    image: yandex/clickhouse-server:21.3.20.1
+    container_name: $CH_SERVER_NAME
+    restart: unless-stopped
+    env_file: ./.env
+    ports:
+      - $CH_LOCAL_PORT:$CH_DOCKER_PORT
+      - 9000:9000
+    volumes:
+      - ./ClickHouse/db:/var/lib/clickhouse
+      - ./clickhouse-server/docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d
+      - ./clickhouse-server/users.d:/etc/clickhouse-server/users.d
+      - ./clickhouse-server/config:/etc/clickhouse-server/config.d
+
+  vector:
+    image: timberio/vector:0.27.0-alpine
+    container_name: vector
+    restart: unless-stopped
+    env_file: ./.env    
+    ports:
+      - $V_LOCAL_METRIC_PORT:$V_DOCKER_METRIC_PORT      
+      - $V_LOCAL_HEALTH_PORT:$V_DOCKER_HEALTH_PORT
+    volumes:
+      - ./vector/config:/etc/vector/
+      - $onec_logs:/var/log/log_1c
+      - ./tmp:/tmp
+    environment:    
+      ch_server: http://$CH_SERVER_NAME:$CH_DOCKER_PORT  
+      ch_user: $ch_user
+      ch_password: $ch_password
+      ch_database: $ch_database
+      vector_api_ip_port: localhost:$V_DOCKER_HEALTH_PORT
+      vector_metric_ip_port: localhost:$V_DOCKER_METRIC_PORT
+      onec_logs_debug: $onec_logs_debug
+    depends_on:
+      - ClickHouse-Server
